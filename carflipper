@@ -42,6 +42,7 @@ local paths = {
 -- STATE
 -- ============================================================
 local state = {
+	isInteracting = false, -- Add this line
     autoMissionRunning = false,
     autoContainerRunning = false,
     missionThread = nil,
@@ -422,6 +423,10 @@ local function completeMission(missionType)
     local targetPos = missionPositions[missionType]
     if not targetPos then return end
 
+	-- NEW: Wait until the player is free, then lock it
+    while state.isInteracting do task.wait(0.1) end
+    state.isInteracting = true
+
     local originalPosition = root.CFrame
     root.CFrame = CFrame.new(targetPos)
     task.wait(0.6)
@@ -452,6 +457,7 @@ local function completeMission(missionType)
     end
 
     logMsg("✅ Completed " .. missionType .. " mission", Theme.Success)
+	state.isInteracting = false
 end
 
 local function autoMissionLoop()
@@ -541,6 +547,10 @@ local function collectContainer(locName)
     local container = objPath and getLabel(objPath)
 
     if container then
+		-- NEW: Wait until the player is free, then lock it
+        while state.isInteracting do task.wait(0.1) end
+        state.isInteracting = true
+
         local originalPosition = root.CFrame
         root.CFrame = CFrame.new(getContainerPosition(container))
         task.wait(0.6)
@@ -555,6 +565,9 @@ local function collectContainer(locName)
         task.wait(0.3)
         root.CFrame = originalPosition
         task.wait(0.2)
+
+		-- NEW: Release the lock
+        state.isInteracting = false
     else
         logMsg("⚠ Could not find " .. locName .. " container in workspace", Theme.Danger)
     end
@@ -709,4 +722,4 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
-logMsg("✅ Auto Farm Hub Loaded! Press J to toggle.", Theme.TextPrimary)
+logMsg("✅ YLE HUB Loaded! Press J to toggle.", Theme.TextPrimary)
