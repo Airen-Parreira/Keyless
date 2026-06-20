@@ -1,0 +1,712 @@
+-- ============================================================
+-- Auto Mission & Container Hub
+-- Toggle with J key
+-- ============================================================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- CONFIG & PATHS
+-- ============================================================
+local missionPositions = {
+    ["Cash"] = Vector3.new(2118, 3, -1714),
+    ["Junk"] = Vector3.new(-1425, -20, 1884),
+}
+
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local root = character:WaitForChild("HumanoidRootPart")
+
+-- Safe path finding
+local function getLabel(pathTable)
+    local current = workspace
+    for _, name in ipairs(pathTable) do
+        current = current:FindFirstChild(name)
+        if not current then return nil end
+    end
+    return current
+end
+
+local paths = {
+    JunkMission = {"Map", "InteractableBillboards", "Junk", "BillboardGui", "Frame", "TimerLabel"},
+    CashMission = {"Map", "InteractableBillboards", "Cash", "BillboardGui", "Frame", "TimerLabel"},
+    PortContainer = {"Containers", "Port", "Container", "BillboardGui", "Frame", "TimerLabel"},
+    JunkContainer = {"Containers", "Junkyard", "Container", "BillboardGui", "Frame", "TimerLabel"},
+    AuctContainer = {"Containers", "Auction", "Container", "BillboardGui", "Frame", "TimerLabel"}
+}
+
+-- ============================================================
+-- STATE
+-- ============================================================
+local state = {
+    autoMissionRunning = false,
+    autoContainerRunning = false,
+    missionThread = nil,
+    containerThread = nil,
+    missionsReady = false,
+    cashSpawned = false,
+    junkSpawned = false,
+    lastCashSeconds = nil,
+    lastJunkSeconds = nil,
+    containersReady = false,
+    portSpawned = false,
+    junkyardSpawned = false,
+    auctionSpawned = false,
+    lastPortSeconds = nil,
+    lastJunkyardSeconds = nil,
+    lastAuctionSeconds = nil,
+}
+
+-- ============================================================
+-- THEME
+-- ============================================================
+local Theme = {
+    Background      = Color3.fromRGB(15, 15, 20),
+    Surface         = Color3.fromRGB(20, 20, 27),
+    SurfaceAlt      = Color3.fromRGB(24, 24, 32),
+    Border          = Color3.fromRGB(40, 40, 52),
+    Accent          = Color3.fromRGB(150, 110, 255),
+    AccentDim       = Color3.fromRGB(95, 75, 150),
+    TextPrimary     = Color3.fromRGB(230, 230, 238),
+    TextSecondary   = Color3.fromRGB(150, 150, 168),
+    Success         = Color3.fromRGB(90, 210, 130),
+    SuccessBg       = Color3.fromRGB(22, 60, 38),
+    Danger          = Color3.fromRGB(220, 90, 90),
+    DangerBg        = Color3.fromRGB(70, 28, 28),
+    Idle            = Color3.fromRGB(26, 32, 26),
+}
+
+-- Helper: caps TextScaled labels so they never grow past a sane size
+local function capTextSize(guiObject, maxSize, minSize)
+    local constraint = Instance.new("UITextSizeConstraint")
+    constraint.MaxTextSize = maxSize
+    constraint.MinTextSize = minSize or 10
+    constraint.Parent = guiObject
+    return constraint
+end
+
+local function addStroke(parent, color, thickness, transparency)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = color or Theme.Border
+    stroke.Thickness = thickness or 1
+    stroke.Transparency = transparency or 0.4
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = parent
+    return stroke
+end
+
+local function addHover(btn, baseColor, hoverColor)
+    btn.MouseEnter:Connect(function()
+        if btn:GetAttribute("Locked") then return end
+        btn.BackgroundColor3 = hoverColor
+    end)
+    btn.MouseLeave:Connect(function()
+        if btn:GetAttribute("Locked") then return end
+        btn.BackgroundColor3 = baseColor
+    end)
+end
+
+-- Converts "01:19" / "0:00" / "79" style timer text into a plain number of seconds
+local function parseTimer(text)
+    if not text then return nil end
+    local mm, ss = text:match("^(%d+):(%d+)$")
+    if mm and ss then
+        return tonumber(mm) * 60 + tonumber(ss)
+    end
+    return tonumber(text)
+end
+
+local function toHex(color)
+    return string.format("#%02X%02X%02X", color.R * 255, color.G * 255, color.B * 255)
+end
+
+-- ============================================================
+-- GUI CONSTRUCTION
+-- ============================================================
+local existing = PlayerGui:FindFirstChild("AutoFarmHub")
+if existing then existing:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoFarmHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local Window = Instance.new("Frame")
+Window.Size = UDim2.new(0, 400, 0, 500)
+Window.Position = UDim2.new(0.5, -200, 0.5, -250)
+Window.BackgroundColor3 = Theme.Background
+Window.BorderSizePixel = 0
+Window.Active = true
+Window.Draggable = true
+Window.Parent = ScreenGui
+Instance.new("UICorner", Window).CornerRadius = UDim.new(0, 12)
+addStroke(Window, Theme.Border, 1, 0.3)
+
+-- Title bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 42)
+TitleBar.BackgroundColor3 = Theme.SurfaceAlt
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = Window
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
+
+local TitleFix = Instance.new("Frame")
+TitleFix.Size = UDim2.new(1, 0, 0, 12)
+TitleFix.Position = UDim2.new(0, 0, 1, -12)
+TitleFix.BackgroundColor3 = Theme.SurfaceAlt
+TitleFix.BorderSizePixel = 0
+TitleFix.Parent = TitleBar
+
+local AccentBar = Instance.new("Frame")
+AccentBar.Size = UDim2.new(0, 4, 0, 18)
+AccentBar.Position = UDim2.new(0, 14, 0.5, -9)
+AccentBar.BackgroundColor3 = Theme.Accent
+AccentBar.BorderSizePixel = 0
+AccentBar.Parent = TitleBar
+Instance.new("UICorner", AccentBar).CornerRadius = UDim.new(1, 0)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -90, 1, 0)
+TitleLabel.Position = UDim2.new(0, 26, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "YLE HUB"
+TitleLabel.TextColor3 = Theme.TextPrimary
+TitleLabel.TextSize = 14
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position = UDim2.new(1, -36, 0.5, -13)
+CloseBtn.BackgroundColor3 = Theme.SurfaceAlt
+CloseBtn.Text = "×"
+CloseBtn.TextColor3 = Theme.TextSecondary
+CloseBtn.TextSize = 16
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.AutoButtonColor = false
+CloseBtn.Parent = TitleBar
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
+addHover(CloseBtn, Theme.SurfaceAlt, Theme.DangerBg)
+CloseBtn.MouseEnter:Connect(function() CloseBtn.TextColor3 = Theme.Danger end)
+CloseBtn.MouseLeave:Connect(function() CloseBtn.TextColor3 = Theme.TextSecondary end)
+
+-- Tab Bar
+local TabBar = Instance.new("Frame")
+TabBar.Size = UDim2.new(1, -32, 0, 34)
+TabBar.Position = UDim2.new(0, 16, 0, 54)
+TabBar.BackgroundColor3 = Theme.Surface
+TabBar.BorderSizePixel = 0
+TabBar.Parent = Window
+Instance.new("UICorner", TabBar).CornerRadius = UDim.new(0, 8)
+
+local TabPadding = Instance.new("UIPadding")
+TabPadding.PaddingTop = UDim.new(0, 3)
+TabPadding.PaddingBottom = UDim.new(0, 3)
+TabPadding.PaddingLeft = UDim.new(0, 3)
+TabPadding.PaddingRight = UDim.new(0, 3)
+TabPadding.Parent = TabBar
+
+local TabLayout = Instance.new("UIListLayout")
+TabLayout.FillDirection = Enum.FillDirection.Horizontal
+TabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabLayout.Padding = UDim.new(0, 4)
+TabLayout.Parent = TabBar
+
+local function makeTab(name, order)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.5, -2, 1, 0)
+    btn.BackgroundColor3 = Theme.Surface
+    btn.BorderSizePixel = 0
+    btn.Text = name
+    btn.TextColor3 = Theme.TextSecondary
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.AutoButtonColor = false
+    btn.LayoutOrder = order
+    btn.Parent = TabBar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    return btn
+end
+
+local MissionsTab = makeTab("Missions", 1)
+local ContainersTab = makeTab("Containers", 2)
+
+-- Page Container (Leaving bottom for logs)
+local PageContainer = Instance.new("Frame")
+PageContainer.Size = UDim2.new(1, 0, 1, -218)
+PageContainer.Position = UDim2.new(0, 0, 0, 98)
+PageContainer.BackgroundTransparency = 1
+PageContainer.Parent = Window
+
+-- Pinned Log Window (Bottom)
+local LogLabel = Instance.new("TextLabel")
+LogLabel.Size = UDim2.new(1, -32, 0, 16)
+LogLabel.Position = UDim2.new(0, 16, 1, -126)
+LogLabel.BackgroundTransparency = 1
+LogLabel.Text = "ACTIVITY LOG"
+LogLabel.TextColor3 = Theme.TextSecondary
+LogLabel.Font = Enum.Font.GothamBold
+LogLabel.TextSize = 11
+LogLabel.TextXAlignment = Enum.TextXAlignment.Left
+LogLabel.Parent = Window
+
+local LogContainer = Instance.new("Frame")
+LogContainer.Size = UDim2.new(1, -32, 0, 92)
+LogContainer.Position = UDim2.new(0, 16, 1, -108)
+LogContainer.BackgroundColor3 = Theme.Surface
+LogContainer.BorderSizePixel = 0
+LogContainer.Parent = Window
+Instance.new("UICorner", LogContainer).CornerRadius = UDim.new(0, 8)
+addStroke(LogContainer, Theme.Border, 1, 0.5)
+
+local LogScroll = Instance.new("ScrollingFrame")
+LogScroll.Size = UDim2.new(1, -16, 1, -12)
+LogScroll.Position = UDim2.new(0, 8, 0, 6)
+LogScroll.BackgroundTransparency = 1
+LogScroll.ScrollBarThickness = 3
+LogScroll.ScrollBarImageColor3 = Theme.Accent
+LogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+LogScroll.Parent = LogContainer
+local LogLayout = Instance.new("UIListLayout")
+LogLayout.SortOrder = Enum.SortOrder.LayoutOrder
+LogLayout.Padding = UDim.new(0, 2)
+LogLayout.Parent = LogScroll
+
+local maxLogs = 50
+local logCount = 0
+
+local function logMsg(msg, color)
+    logCount = logCount + 1
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "LogMsg_" .. logCount
+    lbl.LayoutOrder = logCount
+    lbl.Size = UDim2.new(1, 0, 0, 15)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = " " .. msg
+    lbl.TextColor3 = color or Theme.TextSecondary
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = LogScroll
+
+    local allLogs = {}
+    for _, child in ipairs(LogScroll:GetChildren()) do
+        if child:IsA("TextLabel") then
+            table.insert(allLogs, child)
+        end
+    end
+
+    if #allLogs > maxLogs then
+        table.sort(allLogs, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+        allLogs[1]:Destroy()
+    end
+
+    task.defer(function()
+        LogScroll.CanvasPosition = Vector2.new(0, LogScroll.AbsoluteCanvasSize.Y)
+    end)
+end
+
+-- Shared Builders
+local function makeToggleButton(parent, y, text)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -32, 0, 46)
+    btn.Position = UDim2.new(0, 16, 0, y)
+    btn.BackgroundColor3 = Theme.DangerBg
+    btn.Text = "● " .. text .. "   [OFF]"
+    btn.TextColor3 = Theme.Danger
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 14
+    btn.AutoButtonColor = false
+    btn.Parent = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    addStroke(btn, Theme.Border, 1, 0.6)
+    return btn
+end
+
+-- ============================================================
+-- PAGE: MISSIONS
+-- ============================================================
+local MissionsPage = Instance.new("Frame")
+MissionsPage.Size = UDim2.new(1, 0, 1, 0)
+MissionsPage.BackgroundTransparency = 1
+MissionsPage.Parent = PageContainer
+
+local AutoMissionBtn = makeToggleButton(MissionsPage, 0, "AUTO MISSIONS")
+
+local ManualMissionBtn = Instance.new("TextButton")
+ManualMissionBtn.Size = UDim2.new(1, -32, 0, 46)
+ManualMissionBtn.Position = UDim2.new(0, 16, 0, 58)
+ManualMissionBtn.BackgroundColor3 = Theme.Idle
+ManualMissionBtn.Text = "MANUAL COLLECT (WAITING)"
+ManualMissionBtn.TextColor3 = Theme.TextSecondary
+ManualMissionBtn.Font = Enum.Font.GothamBold
+ManualMissionBtn.TextSize = 13
+ManualMissionBtn.AutoButtonColor = false
+ManualMissionBtn.Parent = MissionsPage
+Instance.new("UICorner", ManualMissionBtn).CornerRadius = UDim.new(0, 8)
+addStroke(ManualMissionBtn, Theme.Border, 1, 0.6)
+
+local MissionTimersLabel = Instance.new("TextLabel")
+MissionTimersLabel.Size = UDim2.new(1, -32, 0, 20)
+MissionTimersLabel.Position = UDim2.new(0, 16, 0, 118)
+MissionTimersLabel.BackgroundTransparency = 1
+MissionTimersLabel.Text = "Cash: --:-- | Junk: --:--"
+MissionTimersLabel.RichText = true
+MissionTimersLabel.TextColor3 = Theme.TextSecondary
+MissionTimersLabel.Font = Enum.Font.Gotham
+MissionTimersLabel.TextSize = 13
+MissionTimersLabel.TextXAlignment = Enum.TextXAlignment.Left
+MissionTimersLabel.Parent = MissionsPage
+
+-- ============================================================
+-- PAGE: CONTAINERS
+-- ============================================================
+local ContainersPage = Instance.new("Frame")
+ContainersPage.Size = UDim2.new(1, 0, 1, 0)
+ContainersPage.BackgroundTransparency = 1
+ContainersPage.Visible = false
+ContainersPage.Parent = PageContainer
+
+local AutoContainerBtn = makeToggleButton(ContainersPage, 0, "AUTO CONTAINERS")
+
+local ManualContainerBtn = Instance.new("TextButton")
+ManualContainerBtn.Size = UDim2.new(1, -32, 0, 46)
+ManualContainerBtn.Position = UDim2.new(0, 16, 0, 58)
+ManualContainerBtn.BackgroundColor3 = Theme.Idle
+ManualContainerBtn.Text = "MANUAL COLLECT (WAITING)"
+ManualContainerBtn.TextColor3 = Theme.TextSecondary
+ManualContainerBtn.Font = Enum.Font.GothamBold
+ManualContainerBtn.TextSize = 13
+ManualContainerBtn.AutoButtonColor = false
+ManualContainerBtn.Parent = ContainersPage
+Instance.new("UICorner", ManualContainerBtn).CornerRadius = UDim.new(0, 8)
+addStroke(ManualContainerBtn, Theme.Border, 1, 0.6)
+
+local ContainerTimersLabel = Instance.new("TextLabel")
+ContainerTimersLabel.Size = UDim2.new(1, -32, 0, 70)
+ContainerTimersLabel.Position = UDim2.new(0, 16, 0, 116)
+ContainerTimersLabel.BackgroundTransparency = 1
+ContainerTimersLabel.Text = "Port: --:--\nJunkyard: --:--\nAuction: --:--"
+ContainerTimersLabel.RichText = true
+ContainerTimersLabel.TextColor3 = Theme.TextSecondary
+ContainerTimersLabel.Font = Enum.Font.Gotham
+ContainerTimersLabel.TextSize = 13
+ContainerTimersLabel.TextXAlignment = Enum.TextXAlignment.Left
+ContainerTimersLabel.TextYAlignment = Enum.TextYAlignment.Top
+ContainerTimersLabel.Parent = ContainersPage
+
+-- ============================================================
+-- TAB LOGIC
+-- ============================================================
+local function switchTab(tab)
+    MissionsPage.Visible = (tab == 1)
+    ContainersPage.Visible = (tab == 2)
+    MissionsTab.BackgroundColor3 = (tab == 1) and Theme.SurfaceAlt or Theme.Surface
+    ContainersTab.BackgroundColor3 = (tab == 2) and Theme.SurfaceAlt or Theme.Surface
+    MissionsTab.TextColor3 = (tab == 1) and Theme.Accent or Theme.TextSecondary
+    ContainersTab.TextColor3 = (tab == 2) and Theme.Accent or Theme.TextSecondary
+end
+MissionsTab.MouseButton1Click:Connect(function() switchTab(1) end)
+ContainersTab.MouseButton1Click:Connect(function() switchTab(2) end)
+switchTab(1)
+
+-- ============================================================
+-- MISSION LOGIC
+-- ============================================================
+local function completeMission(missionType)
+    local targetPos = missionPositions[missionType]
+    if not targetPos then return end
+
+    local originalPosition = root.CFrame
+    root.CFrame = CFrame.new(targetPos)
+    task.wait(0.6)
+
+    game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Base"):WaitForChild("LoadJunk"):FireServer(missionType)
+    task.wait(0.4)
+    game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Base"):WaitForChild("CollectJunk"):FireServer()
+    task.wait(0.5)
+
+    game:GetService("VirtualInputManager"):SendKeyEvent(true, Enum.KeyCode.F, false, game)
+    task.wait(0.05)
+    game:GetService("VirtualInputManager"):SendKeyEvent(false, Enum.KeyCode.F, false, game)
+    task.wait(0.5)
+
+    root.CFrame = originalPosition
+    task.wait(0.3)
+
+    -- Mark this mission as no longer spawned, and rebase the timer
+    -- baseline so the next countdown tick isn't mistaken for a new spawn
+    if missionType == "Cash" then
+        state.cashSpawned = false
+        local lbl = getLabel(paths.CashMission)
+        state.lastCashSeconds = lbl and parseTimer(lbl.Text) or state.lastCashSeconds
+    elseif missionType == "Junk" then
+        state.junkSpawned = false
+        local lbl = getLabel(paths.JunkMission)
+        state.lastJunkSeconds = lbl and parseTimer(lbl.Text) or state.lastJunkSeconds
+    end
+
+    logMsg("✅ Completed " .. missionType .. " mission", Theme.Success)
+end
+
+local function autoMissionLoop()
+    while state.autoMissionRunning do
+        if state.cashSpawned then 
+            completeMission("Cash") 
+        end
+        
+        if state.junkSpawned then 
+            completeMission("Junk") 
+        end
+        
+        task.wait(1) -- Polls every second just like the container loop
+    end
+end
+
+AutoMissionBtn.MouseButton1Click:Connect(function()
+    state.autoMissionRunning = not state.autoMissionRunning
+    if state.autoMissionRunning then
+        AutoMissionBtn.Text = "● AUTO MISSIONS   [ON]"
+        AutoMissionBtn.TextColor3 = Theme.Success
+        AutoMissionBtn.BackgroundColor3 = Theme.SuccessBg
+        logMsg("▶ Auto Missions Enabled")
+        state.missionThread = task.spawn(autoMissionLoop)
+    else
+        AutoMissionBtn.Text = "● AUTO MISSIONS   [OFF]"
+        AutoMissionBtn.TextColor3 = Theme.Danger
+        AutoMissionBtn.BackgroundColor3 = Theme.DangerBg
+        logMsg("⏹ Auto Missions Disabled")
+    end
+end)
+
+ManualMissionBtn.MouseButton1Click:Connect(function()
+    if state.missionsReady then
+        logMsg("⚡ Triggering Manual Collection...")
+        ManualMissionBtn.BackgroundColor3 = Theme.Idle
+        ManualMissionBtn.Text = "COLLECTING..."
+        task.spawn(function()
+            completeMission("Cash")
+            task.wait(1)
+            completeMission("Junk")
+            logMsg("✅ Manual Collection Done")
+        end)
+    else
+        logMsg("⚠ Timers not ready yet!", Theme.Danger)
+    end
+end)
+
+-- ============================================================
+-- CONTAINER LOGIC
+-- ============================================================
+-- Maps a container's display name to its timer path + the state keys
+-- the Heartbeat loop uses to track it
+local containerInfo = {
+    Port     = {path = paths.PortContainer, spawnedKey = "portSpawned",     lastKey = "lastPortSeconds"},
+    Junkyard = {path = paths.JunkContainer, spawnedKey = "junkyardSpawned", lastKey = "lastJunkyardSeconds"},
+    Auction  = {path = paths.AuctContainer, spawnedKey = "auctionSpawned",  lastKey = "lastAuctionSeconds"},
+}
+
+-- Path to the actual container instance (the one holding the ProximityPrompt),
+-- as opposed to `paths.PortContainer` etc which point at the TimerLabel
+local containerObjectPaths = {
+    Port     = {"Containers", "Port", "Container"},
+    Junkyard = {"Containers", "Junkyard", "Container"},
+    Auction  = {"Containers", "Auction", "Container"},
+}
+
+local function getContainerPosition(container)
+    local ok, pivot = pcall(function() return container:GetPivot() end)
+    if ok and pivot then
+        return pivot.Position
+    end
+    return container.Position
+end
+
+-- Simulates holding down the interact key on a ProximityPrompt
+local function fireProximityPrompt(prompt)
+    if not prompt then return false end
+    prompt:InputHoldBegin()
+    task.wait((prompt.HoldDuration or 0) + 0.05)
+    prompt:InputHoldEnd()
+    return true
+end
+
+local function collectContainer(locName)
+    local objPath = containerObjectPaths[locName]
+    local container = objPath and getLabel(objPath)
+
+    if container then
+        local originalPosition = root.CFrame
+        root.CFrame = CFrame.new(getContainerPosition(container))
+        task.wait(0.6)
+
+        local prompt = container:FindFirstChild("ProximityPrompt")
+        if fireProximityPrompt(prompt) then
+            logMsg("📦 Collected " .. locName .. " container!", Color3.fromRGB(100, 180, 230))
+        else
+            logMsg("⚠ No ProximityPrompt found on " .. locName .. " container", Theme.Danger)
+        end
+
+        task.wait(0.3)
+        root.CFrame = originalPosition
+        task.wait(0.2)
+    else
+        logMsg("⚠ Could not find " .. locName .. " container in workspace", Theme.Danger)
+    end
+
+    -- Clear the spawned flag and rebase the timer baseline, same pattern as completeMission
+    local info = containerInfo[locName]
+    if info then
+        state[info.spawnedKey] = false
+        local lbl = getLabel(info.path)
+        state[info.lastKey] = lbl and parseTimer(lbl.Text) or state[info.lastKey]
+    end
+end
+
+local function autoContainerLoop()
+    while state.autoContainerRunning do
+        if state.portSpawned then collectContainer("Port") end
+        if state.junkyardSpawned then collectContainer("Junkyard") end
+        if state.auctionSpawned then collectContainer("Auction") end
+        task.wait(1)
+    end
+end
+
+AutoContainerBtn.MouseButton1Click:Connect(function()
+    state.autoContainerRunning = not state.autoContainerRunning
+    if state.autoContainerRunning then
+        AutoContainerBtn.Text = "● AUTO CONTAINERS   [ON]"
+        AutoContainerBtn.TextColor3 = Theme.Success
+        AutoContainerBtn.BackgroundColor3 = Theme.SuccessBg
+        logMsg("▶ Auto Containers Enabled")
+        state.containerThread = task.spawn(autoContainerLoop)
+    else
+        AutoContainerBtn.Text = "● AUTO CONTAINERS   [OFF]"
+        AutoContainerBtn.TextColor3 = Theme.Danger
+        AutoContainerBtn.BackgroundColor3 = Theme.DangerBg
+        logMsg("⏹ Auto Containers Disabled")
+    end
+end)
+
+ManualContainerBtn.MouseButton1Click:Connect(function()
+    if state.containersReady then
+        logMsg("⚡ Triggering Manual Container Collection...")
+        ManualContainerBtn.BackgroundColor3 = Theme.Idle
+        ManualContainerBtn.Text = "COLLECTING..."
+        task.spawn(function()
+            if state.portSpawned then collectContainer("Port") end
+            if state.junkyardSpawned then collectContainer("Junkyard") end
+            if state.auctionSpawned then collectContainer("Auction") end
+            logMsg("✅ Manual Container Collection Done")
+        end)
+    else
+        logMsg("⚠ No containers spawned yet!", Theme.Danger)
+    end
+end)
+
+-- ============================================================
+-- TRACKER LOOP (Updates UI Text & Manual Button State)
+-- ============================================================
+RunService.Heartbeat:Connect(function()
+    -- Missions
+    local cLabel = getLabel(paths.CashMission)
+    local jLabel = getLabel(paths.JunkMission)
+    local cText = cLabel and cLabel.Text or "--:--"
+    local jText = jLabel and jLabel.Text or "--:--"
+
+    local cSeconds = parseTimer(cText)
+    local jSeconds = parseTimer(jText)
+
+    -- A timer going UP from one tick to the next means it respawned
+    if cSeconds and state.lastCashSeconds and cSeconds > state.lastCashSeconds then
+        state.cashSpawned = true
+    end
+    if jSeconds and state.lastJunkSeconds and jSeconds > state.lastJunkSeconds then
+        state.junkSpawned = true
+    end
+    state.lastCashSeconds = cSeconds or state.lastCashSeconds
+    state.lastJunkSeconds = jSeconds or state.lastJunkSeconds
+
+    local cColor = state.cashSpawned and Theme.Success or Theme.TextSecondary
+    local jColor = state.junkSpawned and Theme.Success or Theme.TextSecondary
+    MissionTimersLabel.Text = string.format(
+        '<font color="%s">Cash: %s</font>  |  <font color="%s">Junk: %s</font>',
+        toHex(cColor), cText, toHex(jColor), jText
+    )
+
+    state.missionsReady = state.cashSpawned or state.junkSpawned
+
+    if state.missionsReady then
+        ManualMissionBtn.BackgroundColor3 = Theme.SuccessBg
+        ManualMissionBtn.TextColor3 = Theme.Success
+        ManualMissionBtn.Text = "MANUAL COLLECT (READY)"
+    else
+        ManualMissionBtn.BackgroundColor3 = Theme.Idle
+        ManualMissionBtn.TextColor3 = Theme.TextSecondary
+        ManualMissionBtn.Text = "MANUAL COLLECT (WAITING)"
+    end
+
+    -- Containers
+    local portL = getLabel(paths.PortContainer)
+    local junkL = getLabel(paths.JunkContainer)
+    local auctL = getLabel(paths.AuctContainer)
+
+    local portText = portL and portL.Text or "--:--"
+    local junkText = junkL and junkL.Text or "--:--"
+    local auctText = auctL and auctL.Text or "--:--"
+
+    local portSeconds = parseTimer(portText)
+    local junkSeconds = parseTimer(junkText)
+    local auctSeconds = parseTimer(auctText)
+
+    if portSeconds and state.lastPortSeconds and portSeconds > state.lastPortSeconds then
+        state.portSpawned = true
+    end
+    if junkSeconds and state.lastJunkyardSeconds and junkSeconds > state.lastJunkyardSeconds then
+        state.junkyardSpawned = true
+    end
+    if auctSeconds and state.lastAuctionSeconds and auctSeconds > state.lastAuctionSeconds then
+        state.auctionSpawned = true
+    end
+    state.lastPortSeconds = portSeconds or state.lastPortSeconds
+    state.lastJunkyardSeconds = junkSeconds or state.lastJunkyardSeconds
+    state.lastAuctionSeconds = auctSeconds or state.lastAuctionSeconds
+
+    local portColor = state.portSpawned and Theme.Success or Theme.TextSecondary
+    local junkColor = state.junkyardSpawned and Theme.Success or Theme.TextSecondary
+    local auctColor = state.auctionSpawned and Theme.Success or Theme.TextSecondary
+
+    ContainerTimersLabel.Text = string.format(
+        '<font color="%s">Port: %s</font>\n<font color="%s">Junkyard: %s</font>\n<font color="%s">Auction: %s</font>',
+        toHex(portColor), portText, toHex(junkColor), junkText, toHex(auctColor), auctText
+    )
+
+    state.containersReady = state.portSpawned or state.junkyardSpawned or state.auctionSpawned
+
+    if state.containersReady then
+        ManualContainerBtn.BackgroundColor3 = Theme.SuccessBg
+        ManualContainerBtn.TextColor3 = Theme.Success
+        ManualContainerBtn.Text = "MANUAL COLLECT (READY)"
+    else
+        ManualContainerBtn.BackgroundColor3 = Theme.Idle
+        ManualContainerBtn.TextColor3 = Theme.TextSecondary
+        ManualContainerBtn.Text = "MANUAL COLLECT (WAITING)"
+    end
+end)
+
+-- ============================================================
+-- WINDOW CONTROLS
+-- ============================================================
+CloseBtn.MouseButton1Click:Connect(function() Window.Visible = false end)
+UserInputService.InputBegan:Connect(function(input, gp)
+    if not gp and input.KeyCode == Enum.KeyCode.J then
+        Window.Visible = not Window.Visible
+    end
+end)
+
+logMsg("✅ Auto Farm Hub Loaded! Press J to toggle.", Theme.TextPrimary)
