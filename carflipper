@@ -8,6 +8,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local HttpService = game:GetService("HttpService")
 
 -- ============================================================
 -- CONFIG & PATHS
@@ -38,10 +39,31 @@ local paths = {
     AuctContainer = {"Containers", "Auction", "Container", "BillboardGui", "Frame", "TimerLabel"}
 }
 
+local carDataMap = {} -- Will store [CarName] = Rarity
+-- Safely fetch and decode the JSON data
+pcall(function()
+    local carsModule = game:GetService("ReplicatedStorage"):WaitForChild("JsonConfigs"):WaitForChild("Folder"):WaitForChild("CarsDataJson")
+    -- If it's a ModuleScript returning a string, require it. If it's a StringValue, read .Value
+    local rawJson = type(carsModule) == "userdata" and (carsModule:IsA("ModuleScript") and require(carsModule) or carsModule.Value) or carsModule
+    
+    if type(rawJson) == "string" then
+        local decoded = HttpService:JSONDecode(rawJson)
+        for _, carInfo in ipairs(decoded) do
+            carDataMap[carInfo.name] = carInfo.rarity
+        end
+    elseif type(rawJson) == "table" then
+        for _, carInfo in ipairs(rawJson) do
+            carDataMap[carInfo.name] = carInfo.rarity
+        end
+    end
+end)
+
 -- ============================================================
 -- STATE
 -- ============================================================
 local state = {
+	autoScanRunning = false,
+	scanThread = nil,
 	isInteracting = false, -- Add this line
     autoMissionRunning = false,
     autoContainerRunning = false,
@@ -133,6 +155,8 @@ if existing then existing:Destroy() end
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "AutoFarmHub"
 ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 2147483647
+ScreenGui.IgnoreGuiInset = true
 ScreenGui.Parent = PlayerGui
 
 local Window = Instance.new("Frame")
@@ -173,7 +197,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -90, 1, 0)
 TitleLabel.Position = UDim2.new(0, 26, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "YLE HUB"
+TitleLabel.Text = "YLE HUB [J to Toggle]"
 TitleLabel.TextColor3 = Theme.TextPrimary
 TitleLabel.TextSize = 14
 TitleLabel.Font = Enum.Font.GothamBold
@@ -219,7 +243,7 @@ TabLayout.Parent = TabBar
 
 local function makeTab(name, order)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.5, -2, 1, 0)
+    btn.Size = UDim2.new(1/3, -2, 1, 0)
     btn.BackgroundColor3 = Theme.Surface
     btn.BorderSizePixel = 0
     btn.Text = name
@@ -235,6 +259,7 @@ end
 
 local MissionsTab = makeTab("Missions", 1)
 local ContainersTab = makeTab("Containers", 2)
+local ScannerTab = makeTab("Scanner", 3) -- NEW
 
 -- Page Container (Leaving bottom for logs)
 local PageContainer = Instance.new("Frame")
@@ -401,19 +426,70 @@ ContainerTimersLabel.TextXAlignment = Enum.TextXAlignment.Left
 ContainerTimersLabel.TextYAlignment = Enum.TextYAlignment.Top
 ContainerTimersLabel.Parent = ContainersPage
 
+
+
+-- ============================================================
+-- PAGE: SCANNER
+-- ============================================================
+local ScannerPage = Instance.new("Frame")
+ScannerPage.Size = UDim2.new(1, 0, 1, 0)
+ScannerPage.BackgroundTransparency = 1
+ScannerPage.Visible = false
+ScannerPage.Parent = PageContainer
+
+-- auto scan button
+local AutoScanBtn = makeToggleButton(ScannerPage, 0, "AUTO SCAN MERCHANTS")
+
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(1, -32, 0, 46)
+ScanBtn.Position = UDim2.new(0, 16, 0, 58)
+ScanBtn.BackgroundColor3 = Theme.Idle
+ScanBtn.Text = "SCAN CARS NEARBY"
+ScanBtn.TextColor3 = Theme.TextSecondary
+ScanBtn.Font = Enum.Font.GothamBold
+ScanBtn.TextSize = 14
+ScanBtn.AutoButtonColor = false
+ScanBtn.Parent = ScannerPage
+Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 8)
+addStroke(ScanBtn, Theme.Border, 1, 0.6)
+addHover(ScanBtn, Theme.Idle, Theme.SurfaceAlt)
+
+local CarListScroll = Instance.new("ScrollingFrame")
+CarListScroll.Size = UDim2.new(1, -32, 1, -114)
+CarListScroll.Position = UDim2.new(0, 16, 0, 114)
+CarListScroll.BackgroundTransparency = 1
+CarListScroll.ScrollBarThickness = 3
+CarListScroll.ScrollBarImageColor3 = Theme.Accent
+CarListScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+CarListScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+CarListScroll.Parent = ScannerPage
+local CarListLayout = Instance.new("UIListLayout")
+CarListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+CarListLayout.Padding = UDim.new(0, 6)
+CarListLayout.Parent = CarListScroll
+
+-- ============================================================
+-- TAB LOGIC
+-- ============================================================
 -- ============================================================
 -- TAB LOGIC
 -- ============================================================
 local function switchTab(tab)
     MissionsPage.Visible = (tab == 1)
     ContainersPage.Visible = (tab == 2)
+    ScannerPage.Visible = (tab == 3)
+    
     MissionsTab.BackgroundColor3 = (tab == 1) and Theme.SurfaceAlt or Theme.Surface
     ContainersTab.BackgroundColor3 = (tab == 2) and Theme.SurfaceAlt or Theme.Surface
+    ScannerTab.BackgroundColor3 = (tab == 3) and Theme.SurfaceAlt or Theme.Surface
+    
     MissionsTab.TextColor3 = (tab == 1) and Theme.Accent or Theme.TextSecondary
     ContainersTab.TextColor3 = (tab == 2) and Theme.Accent or Theme.TextSecondary
+    ScannerTab.TextColor3 = (tab == 3) and Theme.Accent or Theme.TextSecondary
 end
 MissionsTab.MouseButton1Click:Connect(function() switchTab(1) end)
 ContainersTab.MouseButton1Click:Connect(function() switchTab(2) end)
+ScannerTab.MouseButton1Click:Connect(function() switchTab(3) end)
 switchTab(1)
 
 -- ============================================================
@@ -623,6 +699,179 @@ ManualContainerBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
+-- SCANNER LOGIC
+-- ============================================================
+local RarityColors = {
+    [0] = Color3.fromRGB(150, 150, 150), -- Common (Gray)
+    [1] = Color3.fromRGB(80, 200, 120),  -- Uncommon (Green)
+    [2] = Color3.fromRGB(60, 140, 255),  -- Rare (Blue)
+    [3] = Color3.fromRGB(180, 80, 255),  -- Epic (Purple)
+    [4] = Color3.fromRGB(255, 170, 0)    -- Legendary (Gold)
+}
+local RarityNames = { [0] = "Common", [1] = "Uncommon", [2] = "Rare", [3] = "Epic", [4] = "Legendary" }
+
+local function autoScanLoop()
+    while state.autoScanRunning do
+        -- Clear previous results
+        for _, child in ipairs(CarListScroll:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+
+        local activeMerchants = workspace:FindFirstChild("ActiveMerchants")
+        if activeMerchants then
+            local foundCars = {}
+            for _, merchantFolder in ipairs(activeMerchants:GetChildren()) do
+                if merchantFolder:IsA("Model") or merchantFolder:IsA("Folder") then
+                    local carModel = nil
+                    for _, child in ipairs(merchantFolder:GetChildren()) do
+                        if child:IsA("Model") and not child:FindFirstChildOfClass("Humanoid") then
+                            carModel = child
+                            break
+                        end
+                    end
+                    if carModel then
+                        local rarity = carDataMap[carModel.Name] or 0
+                        table.insert(foundCars, {model = carModel, name = carModel.Name, rarity = rarity})
+                    end
+                end
+            end
+
+            table.sort(foundCars, function(a, b) return a.rarity > b.rarity end)
+
+            for i, car in ipairs(foundCars) do
+                local carBtn = Instance.new("TextButton")
+                carBtn.Size = UDim2.new(1, -8, 0, 36)
+                carBtn.BackgroundColor3 = Theme.Surface
+                carBtn.Text = string.format("  %s [%s]", car.name, RarityNames[car.rarity] or "Unknown")
+                carBtn.TextColor3 = RarityColors[car.rarity] or Theme.TextPrimary
+                carBtn.Font = Enum.Font.GothamBold
+                carBtn.TextSize = 12
+                carBtn.TextXAlignment = Enum.TextXAlignment.Left
+                carBtn.AutoButtonColor = false
+                carBtn.LayoutOrder = i
+                carBtn.Parent = CarListScroll
+                Instance.new("UICorner", carBtn).CornerRadius = UDim.new(0, 6)
+                addStroke(carBtn, Theme.Border, 1, 0.4)
+                addHover(carBtn, Theme.Surface, Theme.SurfaceAlt)
+
+                carBtn.MouseButton1Click:Connect(function()
+                    local targetPart = car.model.PrimaryPart or car.model:FindFirstChildWhichIsA("BasePart", true)
+                    if targetPart then
+                        while state.isInteracting do task.wait(0.1) end
+                        root.CFrame = targetPart.CFrame + Vector3.new(0, 5, 0) 
+                        logMsg("🚗 Teleported to " .. car.name)
+                    else
+                        logMsg("⚠ " .. car.name .. " has no physical parts!", Theme.Danger)
+                    end
+                end)
+            end
+        end
+        task.wait(2) -- Repeat every 2 seconds
+    end
+end
+
+AutoScanBtn.MouseButton1Click:Connect(function()
+    state.autoScanRunning = not state.autoScanRunning
+    if state.autoScanRunning then
+        AutoScanBtn.Text = "● AUTO SCAN MERCHANTS   [ON]"
+        AutoScanBtn.TextColor3 = Theme.Success
+        AutoScanBtn.BackgroundColor3 = Theme.SuccessBg
+        logMsg("▶ Auto Scan Enabled")
+        state.scanThread = task.spawn(autoScanLoop)
+    else
+        AutoScanBtn.Text = "● AUTO SCAN MERCHANTS   [OFF]"
+        AutoScanBtn.TextColor3 = Theme.Danger
+        AutoScanBtn.BackgroundColor3 = Theme.DangerBg
+        logMsg("⏹ Auto Scan Disabled")
+    end
+end)
+
+ScanBtn.MouseButton1Click:Connect(function()
+    -- Clear previous results
+    for _, child in ipairs(CarListScroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+
+    local activeMerchants = workspace:FindFirstChild("ActiveMerchants")
+    if not activeMerchants then
+        logMsg("⚠ ActiveMerchants folder not found!", Theme.Danger)
+        return
+    end
+
+    local foundCars = {}
+
+    -- Scan through the merchants
+    for _, merchantFolder in ipairs(activeMerchants:GetChildren()) do
+        if merchantFolder:IsA("Model") or merchantFolder:IsA("Folder") then
+            local carModel = nil
+            
+            -- Look inside the merchant's folder
+            for _, child in ipairs(merchantFolder:GetChildren()) do
+                -- Grab the model that does NOT have a Humanoid inside it
+                if child:IsA("Model") and not child:FindFirstChildOfClass("Humanoid") then
+                    carModel = child
+                    break
+                end
+            end
+
+            if carModel then
+                local rarity = carDataMap[carModel.Name] or 0 -- Default to 0 if not found in JSON
+                table.insert(foundCars, {
+                    model = carModel,
+                    name = carModel.Name,
+                    rarity = rarity
+                })
+            end
+        end
+    end
+
+    if #foundCars == 0 then
+        logMsg("⚠ No cars found at merchants.", Theme.Danger)
+        return
+    end
+
+    -- Sort descending by rarity (Highest at the top)
+    table.sort(foundCars, function(a, b)
+        return a.rarity > b.rarity
+    end)
+
+    -- Populate the UI List
+    for i, car in ipairs(foundCars) do
+        local carBtn = Instance.new("TextButton")
+        carBtn.Size = UDim2.new(1, -8, 0, 36)
+        carBtn.BackgroundColor3 = Theme.Surface
+        carBtn.Text = string.format("  %s [%s]", car.name, RarityNames[car.rarity] or "Unknown")
+        carBtn.TextColor3 = RarityColors[car.rarity] or Theme.TextPrimary
+        carBtn.Font = Enum.Font.GothamBold
+        carBtn.TextSize = 12
+        carBtn.TextXAlignment = Enum.TextXAlignment.Left
+        carBtn.AutoButtonColor = false
+        carBtn.LayoutOrder = i
+        carBtn.Parent = CarListScroll
+        Instance.new("UICorner", carBtn).CornerRadius = UDim.new(0, 6)
+        addStroke(carBtn, Theme.Border, 1, 0.4)
+        addHover(carBtn, Theme.Surface, Theme.SurfaceAlt)
+
+        -- Teleport Logic
+        carBtn.MouseButton1Click:Connect(function()
+            local targetPart = car.model.PrimaryPart or car.model:FindFirstChildWhichIsA("BasePart", true)
+            if targetPart then
+                -- Respect the interaction lock from your automated tasks
+                while state.isInteracting do task.wait(0.1) end
+                
+                -- Teleport 5 studs above the car to prevent getting stuck
+                root.CFrame = targetPart.CFrame + Vector3.new(0, 5, 0) 
+                logMsg("🚗 Teleported to " .. car.name)
+            else
+                logMsg("⚠ " .. car.name .. " has no physical parts!", Theme.Danger)
+            end
+        end)
+    end
+    
+    logMsg("🔍 Scan complete. Found " .. #foundCars .. " cars.")
+end)
+
+-- ============================================================
 -- TRACKER LOOP (Updates UI Text & Manual Button State)
 -- ============================================================
 RunService.Heartbeat:Connect(function()
@@ -722,4 +971,4 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
-logMsg("✅ YLE HUB Loaded! Press J to toggle.", Theme.TextPrimary)
+logMsg("add me on discord @onlyoneflaw incase errors/bugs", Theme.TextPrimary)
