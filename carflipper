@@ -243,7 +243,7 @@ TabLayout.Parent = TabBar
 
 local function makeTab(name, order)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1/3, -2, 1, 0)
+    btn.Size = UDim2.new(1/4, -2, 1, 0)
     btn.BackgroundColor3 = Theme.Surface
     btn.BorderSizePixel = 0
     btn.Text = name
@@ -257,9 +257,10 @@ local function makeTab(name, order)
     return btn
 end
 
-local MissionsTab = makeTab("Missions", 1)
-local ContainersTab = makeTab("Containers", 2)
-local ScannerTab = makeTab("Scanner", 3) -- NEW
+local MainTab = makeTab("Main", 1)
+local MissionsTab = makeTab("Missions", 2)
+local ContainersTab = makeTab("Containers", 3)
+local ScannerTab = makeTab("Scanner", 4)
 
 -- Page Container (Leaving bottom for logs)
 local PageContainer = Instance.new("Frame")
@@ -353,6 +354,42 @@ local function makeToggleButton(parent, y, text)
     addStroke(btn, Theme.Border, 1, 0.6)
     return btn
 end
+
+-- ============================================================
+-- PAGE: MAIN
+-- ============================================================
+local MainPage = Instance.new("Frame")
+MainPage.Size = UDim2.new(1, 0, 1, 0)
+MainPage.BackgroundTransparency = 1
+MainPage.Parent = PageContainer
+
+local FixAllBtn = Instance.new("TextButton")
+FixAllBtn.Size = UDim2.new(1, -32, 0, 46)
+FixAllBtn.Position = UDim2.new(0, 16, 0, 0)
+FixAllBtn.BackgroundColor3 = Theme.Idle
+FixAllBtn.Text = "BULK FIX ALL CARS"
+FixAllBtn.TextColor3 = Theme.TextSecondary
+FixAllBtn.Font = Enum.Font.GothamBold
+FixAllBtn.TextSize = 14
+FixAllBtn.AutoButtonColor = false
+FixAllBtn.Parent = MainPage
+Instance.new("UICorner", FixAllBtn).CornerRadius = UDim.new(0, 8)
+addStroke(FixAllBtn, Theme.Border, 1, 0.6)
+addHover(FixAllBtn, Theme.Idle, Theme.SurfaceAlt)
+
+local SellAllBtn = Instance.new("TextButton")
+SellAllBtn.Size = UDim2.new(1, -32, 0, 46)
+SellAllBtn.Position = UDim2.new(0, 16, 0, 58)
+SellAllBtn.BackgroundColor3 = Theme.Idle
+SellAllBtn.Text = "SELL ALL CARS [EXCEPT FAVORITES]"
+SellAllBtn.TextColor3 = Theme.TextSecondary
+SellAllBtn.Font = Enum.Font.GothamBold
+SellAllBtn.TextSize = 14
+SellAllBtn.AutoButtonColor = false
+SellAllBtn.Parent = MainPage
+Instance.new("UICorner", SellAllBtn).CornerRadius = UDim.new(0, 8)
+addStroke(SellAllBtn, Theme.Border, 1, 0.6)
+addHover(SellAllBtn, Theme.Idle, Theme.SurfaceAlt)
 
 -- ============================================================
 -- PAGE: MISSIONS
@@ -475,21 +512,25 @@ CarListLayout.Parent = CarListScroll
 -- TAB LOGIC
 -- ============================================================
 local function switchTab(tab)
-    MissionsPage.Visible = (tab == 1)
-    ContainersPage.Visible = (tab == 2)
-    ScannerPage.Visible = (tab == 3)
+    MainPage.Visible = (tab == 1)
+    MissionsPage.Visible = (tab == 2)
+    ContainersPage.Visible = (tab == 3)
+    ScannerPage.Visible = (tab == 4)
     
-    MissionsTab.BackgroundColor3 = (tab == 1) and Theme.SurfaceAlt or Theme.Surface
-    ContainersTab.BackgroundColor3 = (tab == 2) and Theme.SurfaceAlt or Theme.Surface
-    ScannerTab.BackgroundColor3 = (tab == 3) and Theme.SurfaceAlt or Theme.Surface
+    MainTab.BackgroundColor3 = (tab == 1) and Theme.SurfaceAlt or Theme.Surface
+    MissionsTab.BackgroundColor3 = (tab == 2) and Theme.SurfaceAlt or Theme.Surface
+    ContainersTab.BackgroundColor3 = (tab == 3) and Theme.SurfaceAlt or Theme.Surface
+    ScannerTab.BackgroundColor3 = (tab == 4) and Theme.SurfaceAlt or Theme.Surface
     
-    MissionsTab.TextColor3 = (tab == 1) and Theme.Accent or Theme.TextSecondary
-    ContainersTab.TextColor3 = (tab == 2) and Theme.Accent or Theme.TextSecondary
-    ScannerTab.TextColor3 = (tab == 3) and Theme.Accent or Theme.TextSecondary
+    MainTab.TextColor3 = (tab == 1) and Theme.Accent or Theme.TextSecondary
+    MissionsTab.TextColor3 = (tab == 2) and Theme.Accent or Theme.TextSecondary
+    ContainersTab.TextColor3 = (tab == 3) and Theme.Accent or Theme.TextSecondary
+    ScannerTab.TextColor3 = (tab == 4) and Theme.Accent or Theme.TextSecondary
 end
-MissionsTab.MouseButton1Click:Connect(function() switchTab(1) end)
-ContainersTab.MouseButton1Click:Connect(function() switchTab(2) end)
-ScannerTab.MouseButton1Click:Connect(function() switchTab(3) end)
+MainTab.MouseButton1Click:Connect(function() switchTab(1) end)
+MissionsTab.MouseButton1Click:Connect(function() switchTab(2) end)
+ContainersTab.MouseButton1Click:Connect(function() switchTab(3) end)
+ScannerTab.MouseButton1Click:Connect(function() switchTab(4) end)
 switchTab(1)
 
 -- ============================================================
@@ -696,6 +737,100 @@ ManualContainerBtn.MouseButton1Click:Connect(function()
     else
         logMsg("⚠ No containers spawned yet!", Theme.Danger)
     end
+end)
+
+-- ============================================================
+-- MAIN LOGIC (BULK FIX)
+-- ============================================================
+local function bulkFixAllCars()
+    local FixCarRemote = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Repair"):WaitForChild("FixCar")
+
+    for round = 1, 10 do
+        logMsg("🔧 Fix round " .. round .. "/10 starting...", Theme.TextPrimary)
+        for carId = 1, 100 do
+            FixCarRemote:FireServer(tostring(carId))
+            task.wait() -- small delay so we don't spam the server too hard
+        end
+        logMsg("✅ Fix round " .. round .. "/10 complete", Theme.Success)
+    end
+
+    logMsg("🎉 Bulk Fix All Cars finished!", Theme.Success)
+end
+
+FixAllBtn.MouseButton1Click:Connect(function()
+    FixAllBtn.Text = "FIXING..."
+    FixAllBtn.BackgroundColor3 = Theme.SurfaceAlt
+    task.spawn(function()
+        bulkFixAllCars()
+        FixAllBtn.Text = "BULK FIX ALL CARS"
+        FixAllBtn.BackgroundColor3 = Theme.Idle
+    end)
+end)
+
+local function getFavoritedCarIds()
+    local favorited = {}
+    
+    local success, CarList = pcall(function()
+        return LocalPlayer.PlayerGui
+            .RuntimeGui.Guis.Garage.MainFrame.GridFrame.GridFrame.CarList
+    end)
+
+    if not success or not CarList then
+        logMsg("⚠ Open the Garage at least once before Sell All!", Theme.Danger)
+        return favorited
+    end
+
+    for _, frame in ipairs(CarList:GetChildren()) do
+        if frame:IsA("Frame") then
+            local template = frame:FindFirstChild("Template")
+            local favBtn = template and template:FindFirstChild("Favourite")
+            if favBtn and favBtn.ImageColor3 == Color3.fromRGB(255, 255, 0) then
+                favorited[frame.Name] = true
+            end
+        end
+    end
+
+    return favorited
+end
+
+local function sellAllCars()
+    local success, CarList = pcall(function()
+        return LocalPlayer.PlayerGui
+            .RuntimeGui.Guis.Garage.MainFrame.GridFrame.GridFrame.CarList
+    end)
+
+    if not success or not CarList then
+        logMsg("🛑 Sell All aborted — open the Garage at least once first!", Theme.Danger)
+        return
+    end
+
+    local SellCarRemote = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Garage"):WaitForChild("SellCar")
+
+    local favorited = getFavoritedCarIds()
+    local soldCount = 0
+    local skippedCount = 0
+
+    for carId = 1, 100 do
+        local carIdStr = tostring(carId)
+        if favorited[carIdStr] then
+            skippedCount = skippedCount + 1
+        else
+            SellCarRemote:FireServer(carIdStr)
+            soldCount = soldCount + 1
+        end
+    end
+
+    logMsg(string.format("💰 Sell All finished! Sold: %d, Skipped (favorited): %d", soldCount, skippedCount), Theme.Success)
+end
+
+SellAllBtn.MouseButton1Click:Connect(function()
+    SellAllBtn.Text = "SELLING..."
+    SellAllBtn.BackgroundColor3 = Theme.SurfaceAlt
+    task.spawn(function()
+        sellAllCars()
+        SellAllBtn.Text = "SELL ALL CARS"
+        SellAllBtn.BackgroundColor3 = Theme.Idle
+    end)
 end)
 
 -- ============================================================
