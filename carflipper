@@ -102,6 +102,7 @@ local Theme = {
     Idle            = Color3.fromRGB(26, 32, 26),
 }
 
+
 -- Helper: caps TextScaled labels so they never grow past a sane size
 local function capTextSize(guiObject, maxSize, minSize)
     local constraint = Instance.new("UITextSizeConstraint")
@@ -391,6 +392,122 @@ Instance.new("UICorner", SellAllBtn).CornerRadius = UDim.new(0, 8)
 addStroke(SellAllBtn, Theme.Border, 1, 0.6)
 addHover(SellAllBtn, Theme.Idle, Theme.SurfaceAlt)
 
+local AutoBuyLabel = Instance.new("TextLabel")
+AutoBuyLabel.Size = UDim2.new(1, -32, 0, 20)
+AutoBuyLabel.Position = UDim2.new(0, 16, 0, 116)
+AutoBuyLabel.BackgroundTransparency = 1
+AutoBuyLabel.Text = "AUTO BUY"
+AutoBuyLabel.TextColor3 = Theme.TextSecondary
+AutoBuyLabel.Font = Enum.Font.GothamBold
+AutoBuyLabel.TextSize = 11
+AutoBuyLabel.TextXAlignment = Enum.TextXAlignment.Left
+AutoBuyLabel.Parent = MainPage
+
+local AutoBuyRow = Instance.new("Frame")
+AutoBuyRow.Size = UDim2.new(1, -32, 0, 36)
+AutoBuyRow.Position = UDim2.new(0, 16, 0, 138)
+AutoBuyRow.BackgroundTransparency = 1
+AutoBuyRow.Parent = MainPage
+
+local AutoBuyRowLayout = Instance.new("UIListLayout")
+AutoBuyRowLayout.FillDirection = Enum.FillDirection.Horizontal
+AutoBuyRowLayout.Padding = UDim.new(0, 4)
+AutoBuyRowLayout.Parent = AutoBuyRow
+
+local mainBulkTiers = {
+    {rarity = 0, label = "CMN",  color = Color3.fromRGB(150,150,150)},
+    {rarity = 1, label = "UNC",  color = Color3.fromRGB(80,200,120)},
+    {rarity = 2, label = "RARE", color = Color3.fromRGB(60,140,255)},
+    {rarity = 3, label = "EPIC", color = Color3.fromRGB(180,80,255)},
+    {rarity = 4, label = "LEG",  color = Color3.fromRGB(255,170,0)},
+}
+
+local bulkBuyLocations = {
+    {name = "Auction",   pos = Vector3.new(-858,  3,   -482)},
+    {name = "Port",      pos = Vector3.new(2136,  3,  -1714)},
+    {name = "Junkyard",  pos = Vector3.new(-1466, -20,  1887)},
+    {name = "Suburbs 1", pos = Vector3.new(-2406, 28,    395)},
+    {name = "Suburbs 2", pos = Vector3.new(-49,   -3,    912)},
+}
+
+local BuyCar = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Merchant"):WaitForChild("BuyCar")
+
+local function bulkBuyCars(targetRarity)
+    local BuyCar = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Merchant"):WaitForChild("BuyCar")
+
+    local scanLocations = {
+        {name = "Auction",   pos = Vector3.new(-858,  3,   -482)},
+        {name = "Port",      pos = Vector3.new(2136,  3,  -1714)},
+        {name = "Junkyard",  pos = Vector3.new(-1466, -20,  1887)},
+        {name = "Suburbs1",  pos = Vector3.new(2027,  29,  -433)},
+        {name = "Suburbs2",  pos = Vector3.new(12,    -6,   951)},
+        {name = "Suburbs3",  pos = Vector3.new(1934,  29,  -455)},
+    }
+
+    local buyQueue = {}
+
+    -- PHASE 1: scan all locations and collect matching cars
+    for _, location in ipairs(scanLocations) do
+        root.CFrame = CFrame.new(location.pos)
+        logMsg("📍 Scanning " .. location.name, Theme.TextPrimary)
+        task.wait(2.5)
+
+        local activeMerchants = workspace:FindFirstChild("ActiveMerchants")
+        if not activeMerchants then
+            logMsg("⚠ ActiveMerchants not found!", Theme.Danger)
+            continue
+        end
+
+        for _, merchantFolder in ipairs(activeMerchants:GetChildren()) do
+            if merchantFolder:IsA("Model") or merchantFolder:IsA("Folder") then
+                local carModel = merchantFolder:FindFirstChildWhichIsA("Model")
+                if carModel then
+                    local prompt = carModel:FindFirstChild("MerchantPrompt")
+                    if prompt then
+                        local zone = prompt:GetAttribute("MerchantZone")
+                        local merchantId = tostring(prompt:GetAttribute("MerchantId"))
+                        local rarity = carDataMap[carModel.Name] or 0
+                        if rarity == targetRarity then
+                            table.insert(buyQueue, {zone = zone, id = merchantId, name = carModel.Name})
+                            logMsg("🎯 Queued: " .. carModel.Name .. " @ " .. (zone or "?") .. " #" .. merchantId, Theme.TextSecondary)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- PHASE 2: fire all remotes rapidly
+    logMsg("🛒 Buying " .. #buyQueue .. " car(s)...", Theme.TextPrimary)
+    for _, entry in ipairs(buyQueue) do
+        BuyCar:FireServer(entry.zone, entry.id)
+        logMsg("💸 Bought: " .. entry.name .. " @ " .. entry.zone .. " #" .. entry.id, Theme.Success)
+        task.wait(0.05)
+    end
+
+    logMsg("✅ Bulk buy complete! Total: " .. #buyQueue, Theme.Success)
+end
+
+
+for _, tier in ipairs(mainBulkTiers) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1/5, -4, 1, 0)
+    btn.BackgroundColor3 = Theme.Surface
+    btn.Text = tier.label
+    btn.TextColor3 = tier.color
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 11
+    btn.AutoButtonColor = false
+    btn.Parent = AutoBuyRow
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    addStroke(btn, Theme.Border, 1, 0.4)
+    addHover(btn, Theme.Surface, Theme.SurfaceAlt)
+    btn.MouseButton1Click:Connect(function()
+        task.spawn(bulkBuyCars, tier.rarity)
+    end)
+end
+
+
 -- ============================================================
 -- PAGE: MISSIONS
 -- ============================================================
@@ -491,9 +608,10 @@ Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 8)
 addStroke(ScanBtn, Theme.Border, 1, 0.6)
 addHover(ScanBtn, Theme.Idle, Theme.SurfaceAlt)
 
+
 local CarListScroll = Instance.new("ScrollingFrame")
-CarListScroll.Size = UDim2.new(1, -32, 1, -114)
-CarListScroll.Position = UDim2.new(0, 16, 0, 114)
+CarListScroll.Size = UDim2.new(1, -32, 1, -112)
+CarListScroll.Position = UDim2.new(0, 16, 0, 112)
 CarListScroll.BackgroundTransparency = 1
 CarListScroll.ScrollBarThickness = 3
 CarListScroll.ScrollBarImageColor3 = Theme.Accent
